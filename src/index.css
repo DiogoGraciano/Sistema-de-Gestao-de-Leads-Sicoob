@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+/* Variáveis CSS personalizadas para Harmonika Games */
+:root {
+  --harmonika-orange: #f97316;
+  --harmonika-red: #dc2626;
+  --harmonika-gradient: linear-gradient(135deg, #f97316 0%, #dc2626 100%);
+}
+
+/* Estilos globais personalizados */
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+}
+
+/* Animações personalizadas */
+@keyframes harmonika-pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+.harmonika-pulse {
+  animation: harmonika-pulse 2s infinite;
+}
