@@ -79,18 +79,33 @@ cd sicoob
 npm install
 ```
 
-3. **Configure o Firebase**
+3. **Configure as variáveis de ambiente**
+   - Copie o arquivo `.env.exemple` para `.env`:
+   ```bash
+   cp .env.exemple .env
+   ```
+   - Abra o arquivo `.env` e preencha com suas credenciais:
+     - **Firebase Configuration**: Obtenha essas informações no [Firebase Console](https://console.firebase.google.com)
+       - Vá em Configurações do Projeto > Configurações Gerais > Seus apps
+       - Copie as credenciais do Firebase para o arquivo `.env`
+     - **Chave de Criptografia**: Use a mesma chave usada no sistema Unity para descriptografar os dados
+   
+   **⚠️ IMPORTANTE**: 
+   - Nunca commite o arquivo `.env` no repositório
+   - O arquivo `.env` já está no `.gitignore` para sua segurança
+   - Mantenha suas credenciais seguras e não as compartilhe
+
+4. **Configure o Firebase**
    - Crie um projeto no [Firebase Console](https://console.firebase.google.com)
    - Configure o Firestore Database
    - Configure o Authentication (Email/Password)
-   - Copie as configurações para `src/config/firebase.ts`
 
-4. **Execute o projeto**
+5. **Execute o projeto**
 ```bash
 npm run dev
 ```
 
-5. **Acesse a aplicação**
+6. **Acesse a aplicação**
    - Abra [http://localhost:5173](http://localhost:5173) no navegador
 
 ## 🔧 Scripts Disponíveis

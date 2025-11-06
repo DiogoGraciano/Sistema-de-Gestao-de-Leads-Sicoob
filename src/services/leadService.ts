@@ -6,18 +6,23 @@ import {
   query, 
   where, 
   orderBy,
-  QueryConstraint
+  limit,
+  startAfter,
+  getCountFromServer,
+  QueryConstraint,
+  DocumentSnapshot
 } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
-import type { Lead, LeadFilters } from '../types/lead';
+import type { Lead, LeadFilters, PaginatedLeadsResult } from '../types/lead';
 import { DecryptService } from './decryptService';
 import { LogService } from './logService';
 
 // Configuração das coleções disponíveis
 export const COLLECTIONS = {
-  'leads_word_scramble_001': 'Palavras Embaralhadas v1',
-  'leads_word_scramble_002': 'Palavras Embaralhadas v2',
-  'leads_quiz_001': 'Quiz v1'
+  'leads_word_scramble_001': 'Riscos e Controles Internos',
+  'leads_word_scramble_002': 'Ética',
+  'leads_word_scramble_003': 'Segurança da Informação',
+  'leads_quiz_001': 'CIPA'
 } as const;
 
 export type CollectionKey = keyof typeof COLLECTIONS;
@@ -55,9 +60,124 @@ export class LeadService {
   }
 
   /**
-   * Busca todos os leads com filtros opcionais
+   * Busca leads paginados com filtros opcionais
    */
-  static async getLeads(filters?: LeadFilters): Promise<Lead[]> {
+  static async getLeads(
+    filters?: LeadFilters,
+    pageSize: number = 10,
+    lastDoc?: DocumentSnapshot
+  ): Promise<PaginatedLeadsResult> {
+    try {
+      this.checkAuth();
+      const leadsRef = collection(db, this.currentCollection);
+      const constraints: QueryConstraint[] = [];
+
+      // Aplicar filtros do Firestore (apenas os que podem ser indexados)
+      if (filters?.game_name) {
+        constraints.push(where('game_name', '==', filters.game_name));
+      }
+      
+      if (filters?.platform) {
+        constraints.push(where('platform', '==', filters.platform));
+      }
+      
+      if (filters?.ganhou) {
+        constraints.push(where('ganhou', '==', filters.ganhou));
+      }
+      
+      if (filters?.autorizoContato) {
+        constraints.push(where('autorizoContato', '==', filters.autorizoContato));
+      }
+
+      // Ordenar por timestamp decrescente (mais recentes primeiro)
+      constraints.push(orderBy('unique_timestamp', 'desc'));
+
+      // Aplicar paginação
+      if (lastDoc) {
+        constraints.push(startAfter(lastDoc));
+      }
+      constraints.push(limit(pageSize + 1)); // Buscar um a mais para verificar se há mais páginas
+
+      const q = query(leadsRef, ...constraints);
+      const querySnapshot = await getDocs(q);
+      
+      // Verificar se há mais páginas
+      const hasMore = querySnapshot.docs.length > pageSize;
+      const docs = hasMore ? querySnapshot.docs.slice(0, pageSize) : querySnapshot.docs;
+      const lastDocument = docs.length > 0 ? docs[docs.length - 1] : undefined;
+
+      let leads: Lead[] = docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Lead));
+
+      // Descriptografar campos criptografados
+      try {
+        leads = await DecryptService.decryptLeads(leads);
+      } catch (error) {
+        console.warn('Erro ao descriptografar leads:', error);
+        // Continuar com dados criptografados se falhar
+      }
+
+      // Aplicar filtro de busca no cliente (para campos criptografados)
+      if (filters?.search) {
+        const searchTerm = filters.search.toLowerCase();
+        leads = leads.filter(lead => 
+          lead.nome.toLowerCase().includes(searchTerm) ||
+          lead.email.toLowerCase().includes(searchTerm) ||
+          lead.game_name.toLowerCase().includes(searchTerm) ||
+          lead.platform.toLowerCase().includes(searchTerm)
+        );
+      }
+
+      // Aplicar filtro de data no cliente
+      if (filters?.dataInicio || filters?.dataFim) {
+        leads = leads.filter(lead => {
+          const leadDate = new Date(lead.dataHora);
+          const startDate = filters.dataInicio ? new Date(filters.dataInicio) : null;
+          const endDate = filters.dataFim ? new Date(filters.dataFim) : null;
+          
+          if (startDate && leadDate < startDate) return false;
+          if (endDate && leadDate > endDate) return false;
+          
+          return true;
+        });
+      }
+
+      // Obter total de documentos (query separada para contar, sem paginação)
+      const countConstraints: QueryConstraint[] = [];
+      if (filters?.game_name) {
+        countConstraints.push(where('game_name', '==', filters.game_name));
+      }
+      if (filters?.platform) {
+        countConstraints.push(where('platform', '==', filters.platform));
+      }
+      if (filters?.ganhou) {
+        countConstraints.push(where('ganhou', '==', filters.ganhou));
+      }
+      if (filters?.autorizoContato) {
+        countConstraints.push(where('autorizoContato', '==', filters.autorizoContato));
+      }
+      const countQuery = query(leadsRef, ...countConstraints);
+      const countSnapshot = await getCountFromServer(countQuery);
+      const total = countSnapshot.data().count;
+
+      return {
+        leads,
+        total,
+        hasMore,
+        lastDoc: lastDocument
+      };
+    } catch (error) {
+      console.error('Erro ao buscar leads:', error);
+      throw new Error('Falha ao carregar leads');
+    }
+  }
+
+  /**
+   * Busca todos os leads (sem paginação) - usado para exportação e estatísticas
+   */
+  static async getAllLeads(filters?: LeadFilters): Promise<Lead[]> {
     try {
       this.checkAuth();
       const leadsRef = collection(db, this.currentCollection);
@@ -183,7 +303,7 @@ export class LeadService {
   static async deleteAllLeads(): Promise<void> {
     try {
       this.checkAuth();
-      const leads = await this.getLeads();
+      const leads = await this.getAllLeads();
       const leadIds = leads.map(lead => lead.id);
       await this.deleteMultipleLeads(leadIds);
       
@@ -204,14 +324,14 @@ export class LeadService {
    * Busca leads para exportação
    */
   static async getLeadsForExport(filters?: LeadFilters): Promise<Lead[]> {
-    // Usar getLeads que já descriptografa automaticamente
-    return this.getLeads(filters);
+    // Usar getAllLeads para exportação (sem paginação)
+    return this.getAllLeads(filters);
   }
 
   /**
    * Obtém estatísticas dos leads
    */
-  static async getLeadStats(): Promise<{
+  static async getLeadStats(filters?: LeadFilters): Promise<{
     total: number;
     ganhou: number;
     perdeu: number;
@@ -222,8 +342,8 @@ export class LeadService {
   }> {
     try {
       this.checkAuth();
-      // getLeads já descriptografa automaticamente
-      const leads = await this.getLeads();
+      // getAllLeads já descriptografa automaticamente
+      const leads = await this.getAllLeads(filters);
       
       const stats = {
         total: leads.length,

@@ -3,8 +3,16 @@
  * Baseado no código C# FirebaseDataDecryptor
  */
 
-// Chave de criptografia (mesma do Unity)
-const ENCRYPTION_KEY = "dH8YpFWXbgcWSTRbP35BsdUeMmx1oc4S";
+// Chave de criptografia obtida das variáveis de ambiente
+const ENCRYPTION_KEY = import.meta.env.VITE_ENCRYPTION_KEY || "";
+
+// Validar se a chave de criptografia está configurada
+if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length < 32) {
+  console.warn(
+    '⚠️ AVISO: Chave de criptografia não configurada ou inválida.\n' +
+    'Por favor, defina VITE_ENCRYPTION_KEY no arquivo .env'
+  );
+}
 
 // Campos que foram criptografados (mesma lista do Unity)
 const ENCRYPTED_FIELDS = new Set([
@@ -22,14 +30,14 @@ export class DecryptService {
    * Verifica se a chave de criptografia é válida
    */
   private static isKeyValid(): boolean {
-    return ENCRYPTION_KEY && ENCRYPTION_KEY.length >= 32;
+    return typeof ENCRYPTION_KEY === 'string' && ENCRYPTION_KEY.length >= 32;
   }
 
   /**
    * Verifica se uma string é Base64 válida
    */
-  private static isValidBase64(str: string): boolean {
-    if (!str) return false;
+  private static isValidBase64(str: string | undefined): boolean {
+    if (!str || typeof str !== 'string') return false;
     
     try {
       // Verificar se é Base64 válido

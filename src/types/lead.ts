@@ -51,3 +51,10 @@ export interface LogFilters {
   dataFim?: string;
   search?: string;
 }
+
+export interface PaginatedLeadsResult {
+  leads: Lead[];
+  total: number;
+  hasMore: boolean;
+  lastDoc?: any; // DocumentSnapshot do último documento para paginação
+}

@@ -19,6 +19,7 @@ interface TableProps<T> {
   emptyMessage?: string;
   title?: string;
   showRowNumbers?: boolean;
+  rowNumberOffset?: number;
   variant?: 'default' | 'modern' | 'elegant';
 }
 
@@ -31,6 +32,7 @@ function Table<T extends { id?: number | string }>({
   emptyMessage = 'Nenhum dado encontrado',
   title,
   showRowNumbers = false,
+  rowNumberOffset = 0,
   variant = 'modern',
 }: TableProps<T>) {
   const LoadingSpinner = () => (
@@ -162,7 +164,7 @@ function Table<T extends { id?: number | string }>({
               >
                 {showRowNumbers && (
                   <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-500">
-                    {rowIndex + 1}
+                    {rowIndex + 1 + rowNumberOffset}
                   </td>
                 )}
                 {columns.map((column, colIndex) => (

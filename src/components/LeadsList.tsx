@@ -13,7 +13,11 @@ import {
   Clock,
   Eye,
   Building2,
-  FileText
+  FileText,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight
 } from 'lucide-react';
 import Table from './ui/Table';
 import Button from './ui/Button';
@@ -22,7 +26,8 @@ import Select from './ui/Select';
 import Modal from './ui/Modal';
 import { FiltersPanel } from './ui/FiltersPanel';
 import LeadView from './LeadView';
-import type { Lead, LeadFilters, ExportOptions } from '../types/lead';
+import type { Lead, LeadFilters, ExportOptions, PaginatedLeadsResult } from '../types/lead';
+import type { DocumentSnapshot } from 'firebase/firestore';
 import { LeadService, COLLECTIONS, type CollectionKey } from '../services/leadService';
 import { exportLeads, formatLeadData, getExportFieldOptions } from '../utils/exportUtils';
 
@@ -55,18 +60,41 @@ const LeadsList: React.FC<LeadsListProps> = ({ onShowLogs }) => {
     porPlataforma: {} as Record<string, number>,
     porJogo: {} as Record<string, number>
   });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [totalLeads, setTotalLeads] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [pageDocs, setPageDocs] = useState<Map<number, DocumentSnapshot>>(new Map());
+  const [visitedPages, setVisitedPages] = useState<Set<number>>(new Set([1]));
 
-  // Carregar leads
-  const loadLeads = async () => {
+  // Carregar leads com paginação server-side
+  const loadLeads = async (page: number = currentPage, lastDoc?: DocumentSnapshot) => {
     try {
       setIsLoading(true);
       // Definir a coleção atual no serviço
       LeadService.setCollection(currentCollection);
-      const [leadsData, statsData] = await Promise.all([
-        LeadService.getLeads(filters),
-        LeadService.getLeadStats()
-      ]);
-      setFilteredLeads(leadsData);
+      
+      // Buscar leads paginados
+      const result: PaginatedLeadsResult = await LeadService.getLeads(
+        filters,
+        itemsPerPage,
+        lastDoc
+      );
+      
+      setFilteredLeads(result.leads);
+      setTotalLeads(result.total);
+      setHasMore(result.hasMore);
+      
+      // Armazenar o último documento desta página para navegação
+      if (result.lastDoc) {
+        setPageDocs(prev => new Map(prev).set(page, result.lastDoc!));
+      }
+      
+      // Marcar página como visitada
+      setVisitedPages(prev => new Set(prev).add(page));
+      
+      // Carregar estatísticas em paralelo (sem paginação)
+      const statsData = await LeadService.getLeadStats(filters);
       setStats(statsData);
     } catch (error) {
       console.error('Erro ao carregar leads:', error);
@@ -75,13 +103,40 @@ const LeadsList: React.FC<LeadsListProps> = ({ onShowLogs }) => {
     }
   };
 
+  // Carregar primeira página quando filtros ou coleção mudarem
   useEffect(() => {
-    loadLeads();
-  }, [filters, currentCollection]);
+    setCurrentPage(1);
+    setPageDocs(new Map());
+    setVisitedPages(new Set([1]));
+    setSelectedLeads([]);
+    loadLeads(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, currentCollection, itemsPerPage]);
+
+  // Carregar página quando mudar (exceto primeira página)
+  useEffect(() => {
+    if (currentPage === 1) {
+      return; // Primeira página já foi carregada no useEffect anterior
+    }
+    
+    // Se já visitamos esta página, usar o documento salvo
+    if (visitedPages.has(currentPage)) {
+      const previousPageDoc = pageDocs.get(currentPage - 1);
+      loadLeads(currentPage, previousPageDoc);
+    } else {
+      // Se é uma página nova (avançando), usar o documento da página anterior
+      const previousPageDoc = pageDocs.get(currentPage - 1);
+      loadLeads(currentPage, previousPageDoc);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage]);
 
   // Aplicar filtros
   const applyFilters = () => {
-    loadLeads();
+    setCurrentPage(1);
+    setPageDocs(new Map());
+    setVisitedPages(new Set([1]));
+    loadLeads(1);
   };
 
   // Limpar filtros
@@ -142,10 +197,19 @@ const LeadsList: React.FC<LeadsListProps> = ({ onShowLogs }) => {
     }
   };
 
-  // Exportar leads
+  // Exportar leads (buscar todos sem paginação)
   const handleExport = async () => {
-    await exportLeads(filteredLeads, exportOptions);
-    setShowExportModal(false);
+    try {
+      setIsLoading(true);
+      LeadService.setCollection(currentCollection);
+      const allLeads = await LeadService.getLeadsForExport(filters);
+      await exportLeads(allLeads, exportOptions);
+      setShowExportModal(false);
+    } catch (error) {
+      console.error('Erro ao exportar leads:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Visualizar lead
@@ -158,6 +222,53 @@ const LeadsList: React.FC<LeadsListProps> = ({ onShowLogs }) => {
   const handleCloseLeadView = () => {
     setShowLeadView(false);
     setSelectedLead(null);
+  };
+
+  // Cálculos de paginação
+  const totalPages = Math.ceil(totalLeads / itemsPerPage);
+  const startItem = filteredLeads.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0;
+  const endItem = (currentPage - 1) * itemsPerPage + filteredLeads.length;
+
+  // Navegação de páginas
+  const goToPage = (page: number) => {
+    if (page >= 1 && (page <= totalPages || hasMore)) {
+      setCurrentPage(page);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const goToFirstPage = () => {
+    setCurrentPage(1);
+    setPageDocs(new Map());
+    setVisitedPages(new Set([1]));
+    loadLeads(1);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const goToLastPage = () => {
+    // Para ir à última página, precisamos navegar página por página
+    // Por enquanto, vamos apenas permitir navegação sequencial
+    if (hasMore) {
+      // Se ainda há mais páginas, não podemos ir direto à última
+      // Vamos apenas ir para a próxima página disponível
+      goToNextPage();
+    } else {
+      goToPage(totalPages);
+    }
+  };
+
+  const goToPreviousPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const goToNextPage = () => {
+    if (hasMore || currentPage < totalPages) {
+      setCurrentPage(currentPage + 1);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   // Configurar colunas da tabela
@@ -301,7 +412,10 @@ const LeadsList: React.FC<LeadsListProps> = ({ onShowLogs }) => {
           <div className="flex space-x-3">
             <Button
               variant="outline"
-              onClick={loadLeads}
+              onClick={() => {
+                const previousPageDoc = currentPage > 1 ? pageDocs.get(currentPage - 1) : undefined;
+                loadLeads(currentPage, previousPageDoc);
+              }}
               isLoading={isLoading}
             >
               <RefreshCw className="h-4 w-4 mr-2" />
@@ -320,7 +434,7 @@ const LeadsList: React.FC<LeadsListProps> = ({ onShowLogs }) => {
             <Button
               variant="primary"
               onClick={() => setShowExportModal(true)}
-              disabled={filteredLeads.length === 0}
+              disabled={totalLeads === 0}
               className="bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-semibold shadow-lg hover:shadow-xl transition-all duration-300"
             >
               <Download className="h-4 w-4 mr-2" />
@@ -474,8 +588,102 @@ const LeadsList: React.FC<LeadsListProps> = ({ onShowLogs }) => {
         isLoading={isLoading}
         title={`Leads - ${COLLECTIONS[currentCollection]}`}
         showRowNumbers
+        rowNumberOffset={(currentPage - 1) * itemsPerPage}
         emptyMessage="Nenhum lead encontrado com os filtros aplicados"
       />
+
+      {/* Paginação */}
+      {totalLeads > 0 && (
+        <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-4">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            {/* Informações e seleção de itens por página */}
+            <div className="flex items-center gap-4">
+              <div className="text-sm text-gray-600">
+                Mostrando <span className="font-semibold text-gray-900">{startItem}</span> a{' '}
+                <span className="font-semibold text-gray-900">{endItem}</span> de{' '}
+                <span className="font-semibold text-gray-900">{totalLeads}</span> leads
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-600">Itens por página:</label>
+                <Select
+                  options={[
+                    { value: '10', label: '10' },
+                    { value: '25', label: '25' },
+                    { value: '50', label: '50' },
+                    { value: '100', label: '100' }
+                  ]}
+                  value={itemsPerPage.toString()}
+                  onChange={(value) => {
+                    setItemsPerPage(Number(value));
+                    setCurrentPage(1);
+                  }}
+                  className="w-20"
+                />
+              </div>
+            </div>
+
+            {/* Controles de navegação */}
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={goToFirstPage}
+                disabled={currentPage === 1 || isLoading}
+                title="Primeira página"
+              >
+                <ChevronsLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={goToPreviousPage}
+                disabled={currentPage === 1 || isLoading}
+                title="Página anterior"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              
+              {/* Indicador de página */}
+              <div className="flex items-center gap-1 px-3">
+                <span className="text-sm text-gray-600">
+                  Página{' '}
+                  <span className="font-semibold text-gray-900">{currentPage}</span>
+                  {' '}de{' '}
+                  <span className="font-semibold text-gray-900">{totalPages}</span>
+                </span>
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={goToNextPage}
+                disabled={currentPage === totalPages || isLoading}
+                title="Próxima página"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={goToLastPage}
+                disabled={!hasMore && currentPage >= totalPages || isLoading}
+                title="Última página"
+              >
+                <ChevronsRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Indicador visual de páginas (limitado para paginação server-side) */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-1 mt-4 pt-4 border-t border-gray-200">
+              <span className="text-xs text-gray-500 mr-2">
+                Páginas disponíveis: {currentPage} {hasMore && '+'}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Modal de confirmação de exclusão */}
       <Modal
@@ -558,7 +766,7 @@ const LeadsList: React.FC<LeadsListProps> = ({ onShowLogs }) => {
               </label>
               <div className="p-3 bg-gray-50 rounded-lg">
                 <span className="text-lg font-semibold text-gray-800">
-                  {filteredLeads.length} lead{filteredLeads.length !== 1 ? 's' : ''}
+                  {totalLeads} lead{totalLeads !== 1 ? 's' : ''}
                 </span>
               </div>
             </div>
