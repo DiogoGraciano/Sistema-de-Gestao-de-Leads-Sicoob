@@ -22,6 +22,7 @@ export const COLLECTIONS = {
   'leads_word_scramble_001': 'Riscos e Controles Internos',
   'leads_word_scramble_002': 'Ética',
   'leads_word_scramble_003': 'Segurança da Informação',
+  'leads_word_scramble_004': 'Sustentabilidade',
   'leads_quiz_001': 'CIPA'
 } as const;
 
